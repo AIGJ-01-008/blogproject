@@ -1,5 +1,5 @@
 -- 원천은 Crowfoot 문서 654 "메인블로그"(https://crowfoot.java21.net/workspaces/54/models/654). 손으로 고치지 않음.
--- Crowfoot export_ddl로 다시 만든다(research R-02). 2026-10-07, 문서 버전 28, 35개 테이블.
+-- Crowfoot export_ddl로 다시 만든다(research R-02). 2026-10-08, 문서 버전 41, 36개 테이블(shedlock 포함).
 
 -- 메인블로그 — MySQL DDL
 
@@ -309,7 +309,7 @@ CREATE TABLE categories (
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정 일시',
     PRIMARY KEY (id)
-) COMMENT='카테고리-----개수·이름 길이, 지울 때 글 처리 미정';
+) COMMENT='카테고리-----블로그당 최대 30개, 이름 1~30자(설정값). 지우면 그 글은 미분류(category_id NULL)로 옮김(D-100 #8)';
 CREATE TABLE posts (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '글 번호',
     blog_id BIGINT COMMENT '블로그 번호',
@@ -405,17 +405,17 @@ CREATE TABLE recent_searches (
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정 일시',
     PRIMARY KEY (id)
-) COMMENT='최근 검색어-----본인에게만 최근 10개. 중복 처리 방식 미정';
+) COMMENT='최근 검색어-----본인에게만 최근 10개. 같은 검색어는 searched_at만 바꿔 맨 앞으로(중복 없음), 비회원은 저장 안 함(D-100 #17)';
 CREATE TABLE post_views (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '번호',
     post_id BIGINT NOT NULL COMMENT '글 번호',
-    viewer_key VARCHAR(64) NOT NULL COMMENT '본 사람 구분값-----회원은 U:{회원 번호}, 비회원 구분값은 미정',
+    viewer_key VARCHAR(64) NOT NULL COMMENT '본 사람 구분값-----회원은 U:{회원 번호}, 비회원은 G:{무작위 쿠키 값, 1년}(D-100 #20)',
     view_date DATE NOT NULL COMMENT '본 날짜',
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정 일시',
     PRIMARY KEY (id),
     CONSTRAINT uk_post_views_post_id_viewer_key_view_date UNIQUE (post_id, viewer_key, view_date)
-) COMMENT='조회 기록-----같은 글·같은 사람·같은 날은 한 건(D-77). 보관 기간 미정';
+) COMMENT='조회 기록-----같은 글·같은 사람·같은 날은 한 건(D-77). 작성자 본인·봇은 세지 않음(D-100 #20·#21). 7일 지난 행은 04:00 정리(설정값)';
 CREATE TABLE admin_actions (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '번호',
     admin_id BIGINT NOT NULL COMMENT '관리자 회원 번호',
@@ -462,6 +462,13 @@ CREATE TABLE login_failures (
     PRIMARY KEY (id),
     CONSTRAINT uk_login_failures_email UNIQUE (email)
 ) COMMENT='로그인 실패 기록-----입력한 이메일(소문자) 기준 연속 로그인 실패. 가입 여부와 무관하게 세어 가입 여부를 드러내지 않음(D-97). 성공·잠금 해제·재설정 때 삭제, 1일 지난 행은 04:00 배치가 삭제';
+CREATE TABLE shedlock (
+    name VARCHAR(64) NOT NULL COMMENT '작업 이름',
+    lock_until TIMESTAMP(3) NOT NULL COMMENT '잠금 끝 시각',
+    locked_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '잠근 시각',
+    locked_by VARCHAR(255) NOT NULL COMMENT '잠근 서버',
+    PRIMARY KEY (name)
+) COMMENT='배치 잠금-----ShedLock 잠금 테이블. 매일 04:00 정리 작업이 서버 여러 대에서도 한 번만 돌게 한다. 라이브러리가 정한 구조라 공통 컬럼 규칙의 예외';
 
 ALTER TABLE user_agreements ADD CONSTRAINT fk_user_agreements_users FOREIGN KEY (user_id) REFERENCES users (id);
 ALTER TABLE refresh_tokens ADD CONSTRAINT fk_refresh_tokens_users FOREIGN KEY (user_id) REFERENCES users (id);

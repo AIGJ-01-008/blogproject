@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -54,20 +55,45 @@ public class BlogClosingService {
     public LocalDateTime closeByOwner(long blogId, long userId) {
         Blog blog = lock(blogId);
         permissionService.require(blog, userId, BlogPermission.OWNER);
-        return schedule(blog, CloseReason.OWNER, userId);
+        return schedule(blog, CloseReason.OWNER, userId, List.of());
     }
 
     /**
      * 관리자 강제 폐쇄(FR-084)·블로그장 권한 박탈(FR-082)에서 부른다. 005의 관리자 API가 쓴다.
-     * 철회는 FR-078대로 그 블로그의 블로그장만 할 수 있다.
+     * 철회: 블로그장 폐쇄는 블로그장이(FR-078), 관리자 강제 폐쇄는 관리자만 한다({@link #withdrawByAdmin}, D-104).
      */
     @Transactional
     public LocalDateTime closeBySystem(long blogId, CloseReason reason, Long actorId) {
+        return closeBySystem(blogId, reason, actorId, List.of());
+    }
+
+    /**
+     * excluded: 즉시 알림에서 뺄 회원. 권한 박탈 폐쇄에서 박탈된 사람(이미 MEMBER로 바뀜)을 뺀다
+     * (005 T029, FR-024, US3-5). 3일 전·1일 전 알림은 owner_revocations로 뺀다.
+     */
+    @Transactional
+    public LocalDateTime closeBySystem(long blogId, CloseReason reason, Long actorId, Collection<Long> excluded) {
         Blog blog = lock(blogId);
         if (blog.isClosed()) {
             throw new BusinessException(ErrorCode.BLOG_NOT_FOUND);
         }
-        return schedule(blog, reason, actorId);
+        return schedule(blog, reason, actorId, excluded);
+    }
+
+    /**
+     * 이미 폐쇄 예정인 블로그를 관리자가 강제 폐쇄할 때(005 T022, D-103 #8): 폐쇄 사유만 ADMIN으로 바꾸고
+     * 시각과 알림은 그대로 둔다(늦추지 않고 다시 알리지 않음). 이후 3일 전·1일 전 알림 문구는 관리자 폐쇄 문구가 된다.
+     * 사유가 ADMIN이 되면 블로그장은 철회할 수 없고 관리자만 철회한다(D-104). 폐쇄 예정 시각을 돌려준다.
+     */
+    @Transactional
+    public LocalDateTime markAdminClose(long blogId) {
+        Blog blog = lock(blogId);
+        if (!blog.isClosing()) {
+            throw new BusinessException(ErrorCode.BLOG_NOT_CLOSING);
+        }
+        blog.markAdminClose();
+        blogRepository.flush();
+        return blog.getCloseScheduledAt();
     }
 
     /** 폐쇄 예정 시각: 지금 날짜 + grace-days의 hour시(FR-073). */
@@ -76,7 +102,7 @@ public class BlogClosingService {
                 .atTime(LocalTime.of(properties.closing().hour(), 0));
     }
 
-    private LocalDateTime schedule(Blog blog, CloseReason reason, Long actorId) {
+    private LocalDateTime schedule(Blog blog, CloseReason reason, Long actorId, Collection<Long> excluded) {
         if (blog.isClosing()) {
             throw new BusinessException(ErrorCode.BLOG_ALREADY_CLOSING);
         }
@@ -85,11 +111,14 @@ public class BlogClosingService {
         blog.scheduleClose(at, reason);
         blogRepository.flush();
         cancelPendingDelegations(blog.getId(), now);
-        notifyAll(blog, at, IMMEDIATE, actorId, now);
+        notifyAll(blog, at, IMMEDIATE, actorId, now, excluded);
         return at;
     }
 
-    /** 블로그장만 철회한다(FR-078). 이후 알림·폐쇄는 일어나지 않는다. */
+    /**
+     * 블로그장이 철회한다(FR-078). 이후 알림·폐쇄는 일어나지 않는다.
+     * 관리자가 강제 폐쇄한 블로그(close_reason = ADMIN)는 블로그장이 철회할 수 없다(ADM-02, BLG-09, D-104).
+     */
     @Transactional
     public void withdraw(long blogId, long userId) {
         Blog blog = lock(blogId);
@@ -97,10 +126,34 @@ public class BlogClosingService {
         if (!blog.isClosing()) {
             throw new BusinessException(ErrorCode.BLOG_NOT_CLOSING);
         }
+        if (blog.getCloseReason() == CloseReason.ADMIN) {
+            throw new BusinessException(ErrorCode.ADMIN_CLOSE_LOCKED);
+        }
+        doWithdraw(blog, userId);
+    }
+
+    /**
+     * 관리자가 강제 폐쇄를 철회한다(005, ADM-02, D-104). 관리자 확인은 부르는 쪽(AdminBlogService)이 했다.
+     * 폐쇄 예정이 아니면 BLOG_NOT_CLOSING, 다른 사유(OWNER·OWNER_REVOKED)의 폐쇄 예정이면 NOT_ADMIN_CLOSE.
+     * 효과는 블로그장 철회와 같다(운영 중으로 돌리고 같은 철회 알림).
+     */
+    @Transactional
+    public void withdrawByAdmin(long blogId, long adminId) {
+        Blog blog = lock(blogId);
+        if (!blog.isClosing()) {
+            throw new BusinessException(ErrorCode.BLOG_NOT_CLOSING);
+        }
+        if (blog.getCloseReason() != CloseReason.ADMIN) {
+            throw new BusinessException(ErrorCode.NOT_ADMIN_CLOSE);
+        }
+        doWithdraw(blog, adminId);
+    }
+
+    private void doWithdraw(Blog blog, long actorId) {
         LocalDateTime at = blog.getCloseScheduledAt();
         blog.withdrawClose();
         blogRepository.flush();
-        notifyAll(blog, at, WITHDRAWN, userId, LocalDateTime.now(clock));
+        notifyAll(blog, at, WITHDRAWN, actorId, LocalDateTime.now(clock), List.of());
     }
 
     /** 04:00 처리: 밀린 회차까지 D3·D1 알림을 보낸다. 보낸 알림 수를 돌려준다. */
@@ -113,7 +166,7 @@ public class BlogClosingService {
             for (Long id : ids) {
                 Blog blog = lock(id);
                 if (blog.isClosing()) {
-                    sent += notifyAll(blog, blog.getCloseScheduledAt(), "D" + days, null, now);
+                    sent += notifyAll(blog, blog.getCloseScheduledAt(), "D" + days, null, now, List.of());
                 }
             }
         }
@@ -169,15 +222,20 @@ public class BlogClosingService {
     /**
      * 블로그장을 뺀 멤버 전원과 구독자 전원(중복 제외, 탈퇴 회원 제외)에게 보낸다. 대상은 보낼 때마다 다시 계산한다.
      * blog_closing_notices와 event_key를 INSERT IGNORE로 넣어 다시 실행해도 한 사람에게 한 번만 간다(FR-077).
+     * 이 폐쇄 예정 시각으로 권한을 박탈당한 사람(owner_revocations)과 excluded는 뺀다(005 T029, FR-024, US3-5).
      */
-    private int notifyAll(Blog blog, LocalDateTime at, String stage, Long actorId, LocalDateTime now) {
+    private int notifyAll(Blog blog, LocalDateTime at, String stage, Long actorId, LocalDateTime now,
+                          Collection<Long> excluded) {
         List<Long> recipients = jdbc.queryForList("""
                 SELECT u.id FROM users u
                 WHERE u.status = 'ACTIVE'
                   AND u.id IN (SELECT m.user_id FROM blog_members m WHERE m.blog_id = ? AND m.role <> 'OWNER'
                                UNION SELECT s.user_id FROM blog_subscriptions s WHERE s.blog_id = ?)
                   AND u.id NOT IN (SELECT o.user_id FROM blog_members o WHERE o.blog_id = ? AND o.role = 'OWNER')
-                ORDER BY u.id""", Long.class, blog.getId(), blog.getId(), blog.getId());
+                  AND u.id NOT IN (SELECT r.user_id FROM owner_revocations r
+                                   WHERE r.blog_id = ? AND r.close_scheduled_at = ?)
+                ORDER BY u.id""", Long.class, blog.getId(), blog.getId(), blog.getId(), blog.getId(), at);
+        recipients = recipients.stream().filter(id -> !excluded.contains(id)).toList();
         NotificationType type = WITHDRAWN.equals(stage) ? NotificationType.BLOG_CLOSING_WITHDRAWN
                 : NotificationType.BLOG_CLOSING;
         String content = message(blog, at, stage);

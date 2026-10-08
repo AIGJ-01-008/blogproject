@@ -60,6 +60,7 @@
 
   function renderPages(totalCount) {
     var nav = $('pages');
+    if (!nav) { return; } // 메인 블로그 둘러보기는 번호 페이지 없이 첫 10개만 보여 준다
     nav.textContent = '';
     var last = Math.max(1, Math.ceil(totalCount / Number(state.size)));
     var start = Math.max(1, state.page - 4);
@@ -79,7 +80,7 @@
 
   function syncControls() {
     $('q').value = state.q;
-    $('size').value = state.size;
+    if ($('size')) { $('size').value = state.size; } // 메인 화면에는 블로그 개수 선택이 없다(10개 고정)
     document.querySelectorAll('[data-sort]').forEach(function (b) {
       var on = b.getAttribute('data-sort') === state.sort;
       b.classList.toggle('is-active', on);
@@ -123,7 +124,9 @@
   document.querySelectorAll('[data-sort]').forEach(function (b) {
     b.addEventListener('click', function () { go({ sort: b.getAttribute('data-sort'), page: 1 }); });
   });
-  $('size').addEventListener('change', function () { go({ size: $('size').value, page: 1 }); });
+  if ($('size')) {
+    $('size').addEventListener('change', function () { go({ size: $('size').value, page: 1 }); });
+  }
   window.addEventListener('popstate', function () { location.reload(); });
 
   load();

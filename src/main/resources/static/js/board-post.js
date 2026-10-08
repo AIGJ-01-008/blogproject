@@ -45,9 +45,11 @@
       link.textContent = post.blog.name;
     }
     api.setText($('title'), post.title);
-    var meta = [post.author ? post.author.nickname : '', board.formatTime(post.createdAt), '조회 ' + post.viewCount];
-    if (post.categoryName) { meta.unshift(post.categoryName); }
-    api.setText($('meta'), meta.join(' · '));
+    var metaBox = $('meta');
+    board.clear(metaBox);
+    if (post.categoryName) { metaBox.appendChild(document.createTextNode(post.categoryName + ' · ')); }
+    metaBox.appendChild(board.authorNode(post.author)); // 활동 중인 작성자는 프로필 링크(003 T021)
+    metaBox.appendChild(document.createTextNode(' · ' + board.formatTime(post.createdAt) + ' · 조회 ' + post.viewCount));
     $('content').innerHTML = post.contentHtml; // 서버에서 걸러낸 HTML(R-01)
     var tags = $('tags');
     board.clear(tags);
@@ -66,10 +68,24 @@
         : '/blog/' + encodeURIComponent(address) + '/posts/' + post.id + '/edit';
     }
     $('delete').hidden = !post.canDelete;
+    renderReport();
     $('post').hidden = false;
     $('comments').hidden = isNotice;
     $('comment-form').hidden = !post.canComment;
     $('comment-login').hidden = !!me || isNotice;
+  }
+
+  // 신고(003 T037, SOC-06): 로그인한 일반 회원이 남의 글·작성자·댓글만. 공지는 신고 대상이 아니다.
+  // 접수처는 서버가 정하고, 블로그 안 작성자 신고는 blogId를 함께 보낸다(블로그장이면 메인 관리자에게 간다).
+  function canReport(author) {
+    return !!(me && me.memberId && !me.admin && !isNotice && author && author.id && author.id !== me.memberId);
+  }
+
+  function renderReport() {
+    if (!$('report')) { return; }
+    var ok = canReport(post.author);
+    $('report').hidden = !ok;
+    $('report-author').hidden = !(ok && post.author.state === 'ACTIVE');
   }
 
   function renderLike() {
@@ -150,8 +166,10 @@
       li.appendChild(el('p', 'comment__deleted', '삭제된 댓글입니다'));
       return li;
     }
-    var meta = (c.author ? c.author.nickname : '') + ' · ' + board.formatTime(c.createdAt) + (c.edited ? ' · 수정됨' : '');
-    li.appendChild(el('div', 'comment__meta', meta));
+    var meta = el('div', 'comment__meta');
+    meta.appendChild(board.authorNode(c.author));
+    meta.appendChild(document.createTextNode(' · ' + board.formatTime(c.createdAt) + (c.edited ? ' · 수정됨' : '')));
+    li.appendChild(meta);
     var text = el('p', 'comment__text');
     if (c.replyToNickname) {
       var to = el('strong', null, '@' + c.replyToNickname + ' ');
@@ -167,6 +185,11 @@
         if (!confirm('댓글을 삭제할까요?')) { return; }
         api.del('/api/comments/' + c.id, null, { activity: true })
           .then(function () { loadComments(commentPage); }, function (err) { board.say($('message'), err.message, true); });
+      }));
+    }
+    if (canReport(c.author) && window.report) {
+      actions.appendChild(action('신고', function () {
+        report.open({ targetType: 'COMMENT', targetId: c.id, blogId: post.blog && post.blog.id, label: '댓글' });
       }));
     }
     li.appendChild(actions);
@@ -216,6 +239,16 @@
         loadComments(commentPage);
       }, function (err) { board.say($('message'), err.message, true); });
   });
+
+  if ($('report')) {
+    $('report').addEventListener('click', function () {
+      report.open({ targetType: 'POST', targetId: post.id, blogId: post.blog && post.blog.id, label: '글' });
+    });
+    $('report-author').addEventListener('click', function () {
+      report.open({ targetType: 'USER', targetId: post.author.id, blogId: post.blog && post.blog.id,
+        label: post.author.nickname + '님' });
+    });
+  }
 
   api.get('/api/auth/session').then(function (s) { me = s; }, function () { me = null; })
     .then(prepare).then(load);

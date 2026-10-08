@@ -55,10 +55,14 @@
     var perms = blog.myPermissions || [];
     show('join', loggedIn && !isMember && !blog.myPendingJoinRequestId);
     show('cancel-join', loggedIn && !!blog.myPendingJoinRequestId);
-    show('subscribe', loggedIn && !blog.subscribed);
+    // 블로그장·메인 관리자에게는 구독 버튼을 보이지 않는다(003 T027, D-102 #1, D-90). 서버도 400·403으로 막는다
+    var canSubscribe = loggedIn && blog.myRole !== 'OWNER' && !(me && me.admin);
+    show('subscribe', canSubscribe && !blog.subscribed);
     show('unsubscribe', loggedIn && blog.subscribed);
     show('share', blog.shareable);
     show('leave', isMember && blog.myRole !== 'OWNER');
+    // 블로그 신고는 메인 관리자가 받는다(003 T037, SOC-06). 내가 블로그장인 블로그와 관리자는 신고하지 않는다
+    show('report', loggedIn && blog.myRole !== 'OWNER' && !(me && me.admin));
     var canManage = perms.length > 0;
     show('manage', canManage);
     if (canManage) {
@@ -202,12 +206,17 @@
 
   $('subscribe').addEventListener('click', function () {
     api.post('/api/blogs/' + blog.id + '/subscription', null, { activity: true })
-      .then(load).catch(function (err) { say(err.message, true); });
+      .then(function () { say('구독했습니다.'); return load(); })
+      .catch(function (err) { say(err.message, true); }); // 400·429 문구는 서버 문구 그대로
   });
 
   $('unsubscribe').addEventListener('click', function () {
     api.del('/api/blogs/' + blog.id + '/subscription', null, { activity: true })
       .then(load).catch(function (err) { say(err.message, true); });
+  });
+
+  $('report').addEventListener('click', function () {
+    report.open({ targetType: 'BLOG', targetId: blog.id, label: blog.name });
   });
 
   $('share').addEventListener('click', function () {

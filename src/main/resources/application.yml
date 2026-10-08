@@ -30,10 +30,10 @@ spring:
     properties:
       mail:
         smtp:
-          auth: true
+          auth: ${MAIL_SMTP_AUTH:true}          # 내 컴퓨터의 테스트 메일함(Mailpit)만 false
           starttls:
-            enable: true
-            required: true
+            enable: ${MAIL_STARTTLS:true}
+            required: ${MAIL_STARTTLS:true}
           connectiontimeout: 5000
           timeout: 5000
           writetimeout: 5000
@@ -51,6 +51,7 @@ auth:
   remember-me-ttl: ${AUTH_REMEMBER_ME_TTL:14d}          # D-61, 로그인 시각부터 고정(D-97)
   idle-timeout: ${AUTH_IDLE_TIMEOUT:30m}                # D-61
   extend-interval: ${AUTH_EXTEND_INTERVAL:5m}           # D-97, 글쓰기 화면 연장 주기
+  cookie-secure: ${AUTH_COOKIE_SECURE:true}             # 운영은 true. 내 컴퓨터 http://localhost에서 Safari로 볼 때만 false(local/start.sh)
   login:
     captcha-after: ${AUTH_LOGIN_CAPTCHA_AFTER:3}        # SEC-13, D-97
     lock-after: ${AUTH_LOGIN_LOCK_AFTER:5}              # SEC-03
@@ -87,6 +88,48 @@ member:
     purge-after: ${MEMBER_PROFILE_IMAGE_PURGE_AFTER:30d}  # 바꾸거나 지운 사진 파일은 30일 뒤 완전 삭제(images 테이블 설명)
   nickname:
     reserved: ${MEMBER_NICKNAME_RESERVED:관리자,admin,운영자,탈퇴한 회원}   # FR-011, D-97
+
+blog:
+  # 002 블로그 관리 설정값 (specs/002-blog-management/data-model.md "설정값", D-68)
+  limit:
+    public: ${BLOG_LIMIT_PUBLIC:3}                      # BLG-10, 일부 공개 포함, 1~5(D-52)
+    private: ${BLOG_LIMIT_PRIVATE:5}                    # BLG-10
+  address:
+    reserved: ${BLOG_ADDRESS_RESERVED:main,admin,api,login,signup,search}   # 6.5, D-98 #1
+  name:
+    max-length: ${BLOG_NAME_MAX_LENGTH:30}              # D-98 #2
+  description:
+    max-length: ${BLOG_DESCRIPTION_MAX_LENGTH:500}      # D-98 #2
+  tag:
+    max-count: ${BLOG_TAG_MAX_COUNT:10}                 # D-88
+    max-length: ${BLOG_TAG_MAX_LENGTH:20}               # 6.4
+  cover-image:
+    max-size: ${BLOG_COVER_IMAGE_MAX_SIZE:3MB}          # 6.3
+    max-pixels: ${BLOG_COVER_IMAGE_MAX_PIXELS:25000000}
+    purge-after: ${BLOG_COVER_IMAGE_PURGE_AFTER:30d}
+  list:
+    page-sizes: ${BLOG_LIST_PAGE_SIZES:10,20,30}        # BRD-02, 6.6, 첫 값이 기본
+  search:
+    min-length: ${BLOG_SEARCH_MIN_LENGTH:2}             # 6.1
+    max-length: ${BLOG_SEARCH_MAX_LENGTH:20}            # 6.1
+  join:
+    reapply-after: ${BLOG_JOIN_REAPPLY_AFTER:7d}        # 6.5
+  appeal:
+    retry-after: ${BLOG_APPEAL_RETRY_AFTER:7d}          # D-98 #25
+  delegation:
+    expire-after: ${BLOG_DELEGATION_EXPIRE_AFTER:7d}    # BLG-08, D-31
+  closing:
+    grace-days: ${BLOG_CLOSING_GRACE_DAYS:7}            # BLG-09, D-12
+    hour: ${BLOG_CLOSING_HOUR:4}                        # D-12
+    notice-days: ${BLOG_CLOSING_NOTICE_DAYS:3,1}        # D-13, D-14
+    purge-after: ${BLOG_CLOSING_PURGE_AFTER:30d}        # D-35, D-86
+  sanction:
+    count-window: ${BLOG_SANCTION_COUNT_WINDOW:365d}    # D-95
+    kick-suggest-count: ${BLOG_SANCTION_KICK_SUGGEST_COUNT:3}   # BLG-13, D-46
+
+blacklist:
+  # 블랙리스트 HMAC 키(research R-09). 기본값 없음. 한 번 정하면 바꾸지 않는다.
+  hash-secret: ${BLACKLIST_HASH_SECRET}
 
 file-storage:
   root: ${FILE_STORAGE_ROOT:./uploads}                  # D-75

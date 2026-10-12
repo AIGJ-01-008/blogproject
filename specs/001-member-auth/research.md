@@ -24,7 +24,7 @@
 
 - **결정**:
   - Access Token: JWT(HS256, jjwt 0.12), 15분(D-97). 내용은 회원 번호(`sub`)와 만료 시각만 담는다(FR-027, 헌장 II). 쿠키 `AT`.
-  - Refresh Token: 32바이트 무작위 값. DB에는 SHA-256 해시만 저장(`refresh_tokens.token_hash`). 쿠키 `RT`, 경로 `/api/auth`.
+  - Refresh Token: 32바이트 무작위 값. DB에는 SHA-256 해시만 저장(`refresh_tokens.token_hash`). 쿠키 `RT`, 경로 `/`. (처음에는 `/api/auth`로 정했으나, R-04의 활동 필터가 `/api/auth` 밖의 요청에서도 그 기기의 RT를 알아야 해서 `/`로 바꿈. HttpOnly라 스크립트는 읽지 못한다. 2026-10-08 구현 중)
   - 쿠키는 모두 `HttpOnly; Secure; SameSite=Lax; Path=/`.
   - "로그인 유지" 미체크: 쿠키에 Max-Age를 주지 않아(세션 쿠키) 브라우저를 닫으면 사라진다. `refresh_tokens.expires_at`은 로그인 + 14일로 두되, 갱신 때 `last_active_at + 30분`이 지났으면 거부한다.
   - "로그인 유지" 체크: 쿠키 Max-Age 14일, `expires_at` = 로그인 시각 + 14일 고정(D-97). 갱신해도 늘지 않는다.
@@ -73,6 +73,7 @@
 - **결정**: 닉네임은 입력 그대로 저장하고, 중복 확인은 `LOWER(nickname)` 비교로 한다. DB의 UNIQUE는 MySQL 8 기본 정렬(`utf8mb4_0900_ai_ci`, 대소문자 무시)이라 `Abc`와 `abc`를 이미 같은 값으로 막는다. 배포된 DB의 정렬 규칙을 구현 첫 작업에서 확인한다. 예약어는 소문자로 바꾼 닉네임에 예약어가 **포함**되면 막는다(D-97). 예약어 목록은 설정값(`member.nickname.reserved`)으로 둔다.
 - **이유**: 6.5, D-97. 탈퇴 후 30일 동안은 `users.nickname`을 지우지 않으므로 UNIQUE가 그대로 그 닉네임을 막는다(D-97 18번).
 - **주의**: `_ai_`(악센트 무시) 정렬이라 일부 한글 자모 조합이 같은 값으로 볼 수 있다. 정렬 확인 때 함께 본다.
+- **확인 결과 (T005, 2026-10-07)**: `docs/04-design/schema.sql`을 MySQL 8.0.46(기본 설정)에 넣고 `SHOW FULL COLUMNS FROM users`로 본 결과, `users.nickname`의 정렬 규칙은 `utf8mb4_0900_ai_ci`로 대소문자를 무시한다. `Abc`를 넣은 뒤 `abc`를 넣으면 `uk_users_nickname` 중복 오류(1062)가 난다. 한글은 `'가'='각'`, `'한글'='한굴'`, `'ㄱ'='가'`가 모두 다른 값으로 나와 닉네임 중복에 문제가 없다. Crowfoot DDL은 정렬 규칙을 따로 적지 않아 서버 기본값을 따른다. 공유 개발 DB `cf_u33_d1`은 접속 비밀번호가 Crowfoot 화면에만 있어 직접 확인하지 못했다. 매니지드 MySQL 8 기본값이면 같은 결과다.
 
 ## R-11 프로필 사진 업로드
 
